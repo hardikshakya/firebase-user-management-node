@@ -1,6 +1,13 @@
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
 const jwt = require('jsonwebtoken');
 
-const { admin, db } = require('../config/firebaseConfig');
+const { admin, db, bucket } = require('../config/firebaseConfig');
+
+function generatePublicFileURL(bucketName, filePath) {
+  return `https://storage.googleapis.com/${bucketName}/${filePath}`;
+}
 
 exports.registerUser = async (req, res) => {
   try {
@@ -20,7 +27,7 @@ exports.registerUser = async (req, res) => {
 
     res.status(201).send({ uid: userRecord.uid });
   } catch (error) {
-    res.status(500).send(error.message);
+    res.status(500).send({ message: error.message });
   }
 };
 
@@ -42,6 +49,43 @@ exports.loginUser = async (req, res) => {
       token,
     });
   } catch (error) {
-    res.status(500).send(error.message);
+    res.status(500).send({ message: error.message });
+  }
+};
+
+exports.uploadProfileImage = async (req, res) => {
+  try {
+    const file = req.file;
+
+    // Create a unique file name
+    const fileName = `${req.user.uid}_${Date.now()}_${file.originalname}`;
+    const tempFilePath = path.join(os.tmpdir(), fileName);
+    const metadata = {
+      contentType: file.mimetype,
+    };
+
+    // Move the file to the temporary directory
+    fs.renameSync(file.path, tempFilePath);
+
+    // Upload file to Firebase Storage
+    const uploadedFile = await bucket.upload(tempFilePath, {
+      destination: `profile-images/${fileName}`,
+      metadata: metadata,
+    });
+
+    // Get the public URL of the file
+    const fileUrl = generatePublicFileURL(
+      uploadedFile[0].metadata.bucket,
+      uploadedFile[0].metadata.fullPath
+    );
+
+    // Update user's profile in Firestore
+    await db.collection('users').doc(req.user.uid).update({
+      profileImageUrl: fileUrl,
+    });
+
+    res.status(200).send({ message: 'File uploaded successfully' });
+  } catch (error) {
+    res.status(500).send({ message: error.message });
   }
 };
